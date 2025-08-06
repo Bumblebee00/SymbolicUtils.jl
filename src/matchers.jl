@@ -6,7 +6,7 @@
 # 3. Callback: takes arguments Dictionary × Number of elements matched
 #
 
-function matcher(val::Any, acSets)
+function matcher(val::Any, acSets, condition)
     # if val is a call (like an operation) creates a term matcher or term matcher with defslot
     if iscall(val)
         # if has two arguments and one of them is a DefSlot, create a term matcher with defslot
@@ -15,7 +15,7 @@ function matcher(val::Any, acSets)
             return defslot_term_matcher_constructor(val, acSets)
         end
         # else return a normal term matcher
-        return term_matcher_constructor(val, acSets)
+        return term_matcher_constructor(val, acSets, condition)
     end
 
     function literal_matcher(next, data, bindings)
@@ -25,7 +25,7 @@ function matcher(val::Any, acSets)
 end
 
 # acSets is not used but needs to be there in case matcher(::Slot) is directly called from the macro
-function matcher(slot::Slot, acSets)
+function matcher(slot::Slot, acSets, condition)
     function slot_matcher(next, data, bindings)
         !islist(data) && return nothing
         val = get(bindings, slot.name, nothing)
@@ -36,6 +36,7 @@ function matcher(slot::Slot, acSets)
             end
         # elseif the first element of data matches the slot predicate, add it to bindings and call next
         elseif slot.predicate(car(data))
+            println("slot of $slot matched")
             next(assoc(bindings, slot.name, car(data)), 1)
         end
     end
@@ -101,8 +102,8 @@ function matcher(segment::Segment, acSets)
     end
 end
 
-function term_matcher_constructor(term, acSets)
-    matchers = (matcher(operation(term), acSets), map(x->matcher(x,acSets), arguments(term))...,)
+function term_matcher_constructor(term, acSets, condition)
+    matchers = (matcher(operation(term), acSets, condition), map(x->matcher(x,acSets, condition), arguments(term))...,)
     
     function loop(term, bindings′, matchers′) # Get it to compile faster
         if !islist(matchers′)
@@ -123,15 +124,28 @@ function term_matcher_constructor(term, acSets)
         # the length of the list, is considered empty
     end
 
+    # if condition errors, this means not all the bindings 
+    # are associated, so we are not at the end of the match. So
+    # we continue to the next matchers
+    function check_conditions(result)
+        result === nothing && return false
+        try
+            return condition(result)
+        catch e
+            return true
+        end
+    end
+
     # if the operation is a pow, we have to match also 1/(...)^(...) with negative exponent
     if operation(term) === ^
         function pow_term_matcher(success, data, bindings)
+            println("in matcher of $term")
             !islist(data) && return nothing # if data is not a list, return nothing
             data = car(data) # from (..., ) to ...
             !iscall(data) && return nothing # if first element is not a call, return nothing
             
             result = loop(data, bindings, matchers)
-            result !== nothing && return success(result, 1)
+            check_conditions(result) && return success(result, 1)
             
             frankestein = nothing
             if (operation(data) === ^) && iscall(arguments(data)[1]) && (operation(arguments(data)[1]) === /) && isequal(arguments(arguments(data)[1])[1], 1)
@@ -161,7 +175,7 @@ function term_matcher_constructor(term, acSets)
 
             if frankestein !==nothing
                 result = loop(frankestein, bindings, matchers)
-                result !== nothing && return success(result, 1)
+                check_conditions(result) && return success(result, 1)
             end
 
             return nothing
@@ -170,6 +184,8 @@ function term_matcher_constructor(term, acSets)
     # if we want to do commutative checks, i.e. call matcher with different order of the arguments
     elseif acSets!==nothing && operation(term) in [+, *]
         function commutative_term_matcher(success, data, bindings)
+            println("in matcher of $term")
+            println("scs is $success")
             !islist(data) && return nothing # if data is not a list, return nothing
             !iscall(car(data)) && return nothing # if first element is not a call, return nothing
             operation(term) !== operation(car(data)) && return nothing # if the operation of data is not the correct one, don't even try
@@ -183,13 +199,13 @@ function term_matcher_constructor(term, acSets)
                     candidate = Term{T}(f, @views data_args[inds])
 
                     result = loop(candidate, bindings, matchers)                
-                    result !== nothing && return success(result,1)
+                    check_conditions(result) && return success(result, 1)
                 end
             # if car(data) does not subtype to number, it might not be commutative
             else
                 # call the normal matcher
                 result = loop(car(data), bindings, matchers)
-                result !== nothing && return success(result, 1)
+                check_conditions(result) && return success(result, 1)
             end
             return nothing
         end
@@ -200,7 +216,7 @@ function term_matcher_constructor(term, acSets)
             !iscall(car(data)) && return nothing # if first element is not a call, return nothing
             
             result = loop(car(data), bindings, matchers)
-            result !== nothing && return success(result, 1)
+            check_conditions(result) && return success(result, 1)
             return nothing
         end
         return term_matcher

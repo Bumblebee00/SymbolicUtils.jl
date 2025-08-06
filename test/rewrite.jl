@@ -143,6 +143,12 @@ end
     @test r1(sqrt(a)) === (a, 1//2) # uses sqrt_matcher
 end
 
+@testset "conditions inside rule" begin
+    C = @rule (~x)^(~m)*(~y)^(~n) => "success" where (~m)^(~n)==8
+    @test C((a^2)*(b^3)) === "success"
+    @test C((b^2)*(a^3)) === "success"
+end
+
 using SymbolicUtils: @capture
 
 @testset "Capture form" begin

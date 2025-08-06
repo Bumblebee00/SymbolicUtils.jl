@@ -206,6 +206,7 @@ function (r::Rule)(term)
     rhs = r.rhs
 
     try
+        # TODO is assoc(bindings, :MATCH, term) necessary?
         # n == 1 means that exactly one term of the input (term,) was matched
         success(bindings, n) = n == 1 ? (@timer "RHS" rhs(assoc(bindings, :MATCH, term))) : nothing
         return r.matcher(success, (term,), EMPTY_IMMUTABLE_DICT)
@@ -224,11 +225,11 @@ function rewrite_rhs(expr::Expr)
     if expr.head == :where
         rhs = expr.args[1]
         predicate = expr.args[2]
-        expr = :($predicate ? $rhs : nothing)
+        return rhs, predicate
     end
-    return expr
+    return expr, nothing
 end
-rewrite_rhs(expr) = expr
+rewrite_rhs(expr) = expr, nothing
 
 """
     @rule LHS => RHS
@@ -369,7 +370,11 @@ of an expression.
 macro rule(expr)
     @assert expr.head == :call && expr.args[1] == :(=>)
     lhs = expr.args[2]
-    rhs = rewrite_rhs(expr.args[3])
+    rhs, condition  = rewrite_rhs(expr.args[3])
+    println("lhs: ", lhs)
+    println("RHS: ", rhs)
+    println("Conditions: ", condition)
+
     keys = Symbol[]
     lhs_term = makepattern(lhs, keys)
     unique!(keys)
@@ -379,7 +384,7 @@ macro rule(expr)
         Rule(
             $(QuoteNode(expr)),
             lhs_pattern,
-            matcher(lhs_pattern, permutations),
+            matcher(lhs_pattern, permutations, __MATCHES__ -> $(makeconsequent(condition))),
             __MATCHES__ -> $(makeconsequent(rhs)),
             rule_depth($lhs_term)
         )
@@ -444,7 +449,7 @@ getdepth(r::ACRule) = getdepth(r.rule)
 macro acrule(expr)
     @assert expr.head == :call && expr.args[1] == :(=>)
     lhs = expr.args[2]
-    rhs = rewrite_rhs(expr.args[3])
+    rhs, condition = rewrite_rhs(expr.args[3])
     keys = Symbol[]
     lhs_term = makepattern(lhs, keys)
     unique!(keys)
@@ -456,7 +461,7 @@ macro acrule(expr)
         lhs_pattern = $(lhs_term)
         rule = Rule($(QuoteNode(expr)),
              lhs_pattern,
-             matcher(lhs_pattern, permutations),
+             matcher(lhs_pattern, permutations, __MATCHES__ -> $(makeconsequent(condition))),
              __MATCHES__ -> $(makeconsequent(rhs)),
              rule_depth($lhs_term))
         ACRule(permutations, rule, $arity)
@@ -466,7 +471,7 @@ end
 macro ordered_acrule(expr)
     @assert expr.head == :call && expr.args[1] == :(=>)
     lhs = expr.args[2]
-    rhs = rewrite_rhs(expr.args[3])
+    rhs, condition = rewrite_rhs(expr.args[3])
     keys = Symbol[]
     lhs_term = makepattern(lhs, keys)
     unique!(keys)
@@ -478,7 +483,7 @@ macro ordered_acrule(expr)
         lhs_pattern = $(lhs_term)
         rule = Rule($(QuoteNode(expr)),
              lhs_pattern,
-             matcher(lhs_pattern, combinations),
+             matcher(lhs_pattern, combinations, __MATCHES__ -> $(makeconsequent(condition))),
              __MATCHES__ -> $(makeconsequent(rhs)),
              rule_depth($lhs_term))
         ACRule(combinations, rule, $arity)
