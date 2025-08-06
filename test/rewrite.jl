@@ -144,9 +144,9 @@ end
 end
 
 @testset "conditions inside rule" begin
-    C = @rule (~x)^(~m)*(~y)^(~n) => "success" where (~m)^(~n)==8
-    @test C((a^2)*(b^3)) === "success"
-    @test C((b^2)*(a^3)) === "success"
+    C = @rule (~x)^(~m)*(~y)^(~n) => (~x, ~m, ~y, ~n) where (~m)^(~n)==8
+    @test C((a^2)*(b^3)) === (a, 2, b, 3)
+    @test C((b^2)*(a^3)) === (b, 2, a, 3)
 end
 
 using SymbolicUtils: @capture
