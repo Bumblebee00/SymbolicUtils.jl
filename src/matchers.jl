@@ -12,7 +12,7 @@ function matcher(val::Any, acSets, condition)
         # if has two arguments and one of them is a DefSlot, create a term matcher with defslot
         # just two arguments bc defslot is only supported with operations with two args: *, ^, +
         if any(x -> isa(x, DefSlot), arguments(val))
-            return defslot_term_matcher_constructor(val, acSets)
+            return defslot_term_matcher_constructor(val, acSets, condition)
         end
         # else return a normal term matcher
         return term_matcher_constructor(val, acSets, condition)
@@ -45,8 +45,8 @@ end
 # this is called only when defslot_term_matcher finds the operation and tries
 # to match it, so no default value used. So the same function as slot_matcher
 # can be used
-function matcher(defslot::DefSlot, acSets)
-    matcher(Slot(defslot.name, defslot.predicate), nothing) # slot matcher doesnt use acsets
+function matcher(defslot::DefSlot, acSets, condition)
+    matcher(Slot(defslot.name, defslot.predicate), nothing, nothing) # slot matcher doesnt use acsets
 end
 
 # returns n == offset, 0 if failed
@@ -130,8 +130,12 @@ function term_matcher_constructor(term, acSets, condition)
     function check_conditions(result)
         result === nothing && return false
         try
-            return condition(result)
+            tmp = condition(result)
+            # tmp==nothing means no conditions are present
+            tmp===nothing && return true
+            return tmp
         catch e
+            println("ocndition failed, continuing")
             return true
         end
     end
@@ -139,12 +143,13 @@ function term_matcher_constructor(term, acSets, condition)
     # if the operation is a pow, we have to match also 1/(...)^(...) with negative exponent
     if operation(term) === ^
         function pow_term_matcher(success, data, bindings)
-            println("in matcher of $term")
+            println("in ^ matcher of $term with data $data")
             !islist(data) && return nothing # if data is not a list, return nothing
             data = car(data) # from (..., ) to ...
             !iscall(data) && return nothing # if first element is not a call, return nothing
             
             result = loop(data, bindings, matchers)
+            println(result)
             check_conditions(result) && return success(result, 1)
             
             frankestein = nothing
@@ -184,7 +189,7 @@ function term_matcher_constructor(term, acSets, condition)
     # if we want to do commutative checks, i.e. call matcher with different order of the arguments
     elseif acSets!==nothing && operation(term) in [+, *]
         function commutative_term_matcher(success, data, bindings)
-            println("in matcher of $term")
+            println("in +* matcher of $term with data $data")
             println("scs is $success")
             !islist(data) && return nothing # if data is not a list, return nothing
             !iscall(car(data)) && return nothing # if first element is not a call, return nothing
@@ -226,33 +231,47 @@ end
 # creates a matcher for a term containing a defslot, such as:
 # (~x + ...complicated pattern...)     *          ~!y
 #    normal part (can bee a tree)   operation     defslot part
-function defslot_term_matcher_constructor(term, acSets)
+function defslot_term_matcher_constructor(term, acSets, condition)
     a = arguments(term)
     defslot_index = findfirst(x -> isa(x, DefSlot), a) # find the defslot in the term
     defslot = a[defslot_index]
     if length(a) == 2
-        other_part_matcher = matcher(a[defslot_index == 1 ? 2 : 1], acSets)
+        other_part_matcher = matcher(a[defslot_index == 1 ? 2 : 1], acSets, condition)
     else
         others = [a[i] for i in eachindex(a) if i != defslot_index]
         T = symtype(term)
         f = operation(term)
-        other_part_matcher = term_matcher_constructor(Term{T}(f, others), acSets)
+        other_part_matcher = term_matcher_constructor(Term{T}(f, others), acSets, condition)
     end
     
-    normal_matcher = term_matcher_constructor(term, acSets)
+    normal_matcher = term_matcher_constructor(term, acSets, condition)
+
+
 
     function defslot_term_matcher(success, data, bindings)
+        println("in defslotmatcher of $term with data $data")
         !islist(data) && return nothing # if data is not a list, return nothing
         # call the normal matcher, with success function foo1 that simply returns the bindings
         #                       <--foo1-->
         result = normal_matcher((b,n) -> b, data, bindings)
         result !== nothing && return success(result, 1)
+        println("no match, trying defslot")
         # if no match, try to match with a defslot.
         # checks whether it matches the normal part if yes executes foo2
         # foo2: adds the pair (default value name, default value) to the found bindings
         #                           <-------------------foo2---------------------------->
         result = other_part_matcher((b,n) -> assoc(b, defslot.name, defslot.defaultValue), data, bindings)
-        result !== nothing && return success(result, 1)
-        nothing
+        result === nothing && return nothing
+        println("defslot match!")
+        try
+            tmp = condition(result)
+            # tmp==nothing means no conditions are present
+            if tmp===nothing || tmp
+                return success(result, 1)
+            end
+        catch e
+            println("condition failed, continuing")
+            return success(result, 1)
+        end
     end
 end
