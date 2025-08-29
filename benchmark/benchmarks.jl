@@ -54,7 +54,6 @@ let r = @rule(~x => ~x), rs = RuleSet([r]),
 
     overhead["substitute"] = BenchmarkGroup()
 
-
     overhead["substitute"]["a"] = @benchmarkable substitute(subs_expr, $(Dict(a=>1))) setup=begin
         subs_expr = (sin(a+b) + cos(b+c)) * (sin(b+c) + cos(c+a)) * (sin(c+a) + cos(a+b))
     end
